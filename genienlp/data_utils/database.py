@@ -82,6 +82,7 @@ class Database(object):
                 for token, type in self.data.items():
                     if token in subset:
                         lookup_dict[token] = type
+                lookup_dict = Trie(lookup_dict)
         else:
             lookup_dict = self.data
         
