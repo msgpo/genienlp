@@ -11,6 +11,8 @@ models/__pycache__/
 multiprocess/__pycache__/
 results/
 tests/embeddings/*
+tests/database/*.json
+tests/music
 local_files
 corenlp_server-*
 
