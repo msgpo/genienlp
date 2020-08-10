@@ -229,18 +229,15 @@ class BaseAlmondTask(BaseTask):
         
         return entity2type
 
-    def find_types(self, tokens, split, answer, no_oracle=False):
+    def find_types(self, tokens, split, answer):
         # Oracle: Entity types can be retrieved for train and eval sets from the program
         # this will speed up the process significantly
         
-        if no_oracle or split in ['test']:
+        if self.args.retrieve_method == 'database' or split == 'test':
             tokens_type_ids = self.db.lookup(tokens)
         else:
-            if self.args.retrieve_method == 'database':
-                tokens_type_ids = self.db.lookup(tokens)
-            else:
-                entity2type = self.collect_answer_entity_types(answer)
-                tokens_type_ids = self.db.lookup(tokens, subset=entity2type, retrieve_method=self.args.retrieve_method)
+            entity2type = self.collect_answer_entity_types(answer)
+            tokens_type_ids = self.db.lookup(tokens, subset=entity2type, retrieve_method=self.args.retrieve_method)
     
         return tokens_type_ids
     
@@ -253,7 +250,7 @@ class BaseAlmondTask(BaseTask):
                 token_freqs.append(1.0 / (zipf_frequency(token, 'en') + 1e-3))
         return token_freqs
         
-    def tokenize(self, sentence, split=None, field_name=None, answer=None, no_oracle=False):
+    def tokenize(self, sentence, split=None, field_name=None, answer=None):
 
         if not sentence:
             return [], [], []
@@ -269,7 +266,7 @@ class BaseAlmondTask(BaseTask):
         token_freqs = []
         if self.args.do_entity_linking and field_name in ('question', 'context', 'context_question'):
             if 'type' in self.args.features:
-                tokens_type_ids = self.find_types(tokens, split, answer, no_oracle)
+                tokens_type_ids = self.find_types(tokens, split, answer)
             if 'freq' in self.args.features:
                 token_freqs = self.find_freqs(tokens, tokens_type_ids)
         
@@ -323,7 +320,7 @@ class Almond(BaseAlmondTask):
     def is_contextual(self):
         return False
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         # the question is irrelevant, so the question says English and ThingTalk even if we're doing
         # a different language (like Chinese)
         _id, sentence, target_code = parts
@@ -332,7 +329,7 @@ class Almond(BaseAlmondTask):
         answer = target_code
 
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
 
 @register_task('contextual_almond')
@@ -345,12 +342,12 @@ class ContextualAlmond(BaseAlmondTask):
     def is_contextual(self):
         return True
     
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         _id, context, sentence, target_code = parts
         answer = target_code
         question = sentence
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
 
 @register_task('reverse_almond')
@@ -368,7 +365,7 @@ class ReverseAlmond(BaseTask):
     def _is_program_field(self, field_name):
         return field_name == 'context'
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         # the question is irrelevant, so the question says English and ThingTalk even if we're doing
         # a different language (like Chinese)
         _id, sentence, target_code = parts
@@ -376,7 +373,7 @@ class ReverseAlmond(BaseTask):
         context = target_code
         answer = sentence
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=None, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=None, lower=False)
 
 
 @register_task('almond_dialogue_nlu')
@@ -391,13 +388,13 @@ class AlmondDialogueNLU(BaseAlmondTask):
     def is_contextual(self):
         return True
     
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         _id, context, sentence, target_code = parts
 
         answer = target_code
         question = sentence
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
     def get_splits(self, root, **kwargs):
         return AlmondDataset.return_splits(path=os.path.join(root, 'almond/user'), make_example=self._make_example, **kwargs)
@@ -416,12 +413,12 @@ class AlmondDialogueNLUAgent(BaseAlmondTask):
     def is_contextual(self):
         return True
     
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         _id, context, sentence, target_code = parts
         answer = target_code
         question = sentence
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
     def get_splits(self, root, **kwargs):
         return AlmondDataset.return_splits(path=os.path.join(root, 'almond/agent'), make_example=self._make_example, **kwargs)
@@ -443,14 +440,14 @@ class AlmondDialogueNLG(BaseAlmondTask):
     def metrics(self):
         return ['bleu']
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         # the question is irrelevant for this task
         _id, context, sentence, target_code = parts
         question = 'what should the agent say ?'
         context = context + ' ' + target_code
         answer = sentence
         return Example.from_raw(self.name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
     def get_splits(self, root, **kwargs):
         return AlmondDataset.return_splits(path=os.path.join(root, 'almond/agent'), make_example=self._make_example, **kwargs)
@@ -471,7 +468,7 @@ class AlmondDialoguePolicy(BaseAlmondTask):
     def metrics(self):
         return ['em', 'bleu']
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         # the question is irrelevant for this task, and the sentence is intentionally ignored
         _id, context, _sentence, target_code = parts
         question = 'what should the agent do ?'
@@ -558,7 +555,7 @@ class AlmondMultiLingual(BaseAlmondMultiLingualTask):
     def metrics(self):
         return ['em', 'bleu']
     
-    def _make_example(self, parts, dir_name, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name, split=None, **kwargs):
         _id, sentence, target_code = parts
         language = ISO_to_LANG.get(dir_name, 'English').lower()
         if kwargs.get('lang_as_question'):
@@ -568,7 +565,7 @@ class AlmondMultiLingual(BaseAlmondMultiLingualTask):
         context = sentence
         answer = target_code
         return Example.from_raw(self.name + '/' + dir_name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
 
 @register_task('almond_dialog_multilingual_nlu')
@@ -586,12 +583,12 @@ class AlmondDialogMultiLingualNLU(BaseAlmondMultiLingualTask):
     def metrics(self):
         return ['em', 'bleu']
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         _id, context, sentence, target_code = parts
         answer = target_code
         question = sentence
         return Example.from_raw(self.name + '/' + dir_name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
 
 @register_task('almond_dialog_multilingual_nlg')
@@ -608,12 +605,12 @@ class AlmondDialogMultiLingualNLG(BaseAlmondTask):
     def metrics(self):
         return ['bleu']
 
-    def _make_example(self, parts, dir_name=None, split=None, no_oracle=False, **kwargs):
+    def _make_example(self, parts, dir_name=None, split=None, **kwargs):
         # the question is irrelevant for this task
         _id, context, sentence, target_code = parts
         question = 'what should the agent say ?'
         context = context + ' ' + target_code
         answer = sentence
         return Example.from_raw(self.name + '/' + dir_name + '/' + _id, context, question, answer,
-                                tokenize=self.tokenize, split=split, no_oracle=no_oracle, lower=False)
+                                tokenize=self.tokenize, split=split, lower=False)
 
