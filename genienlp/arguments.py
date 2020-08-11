@@ -261,7 +261,12 @@ def parse_argv(parser):
     
     parser.add_argument('--top_level_pos_embedding_type', default='none', choices=['none', 'pretrained', 'sinusoid'],
                         help='add positional embedding to transformer\'s output contextual embeddings')
-
+    parser.add_argument('--lookup_method', default='longer_first', choices=['smaller_first', 'longer_first'],
+                        help='smaller_first: start from one token and grow into longer spans until a match is found,'
+                             'longer_first: start from the longest span and shrink until a match is found')
+    
+    parser.add_argument('--database_type', default='json', choices=['json', 'elastic'],
+                        help='database to interact with for NER')
 
 def post_parse(args):
     

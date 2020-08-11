@@ -27,7 +27,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
+
 from pytrie import SortedStringTrie as Trie
+from elasticsearch import Elasticsearch
+
+tracer = logging.getLogger('elasticsearch')
+tracer.setLevel(logging.CRITICAL)
+
 # import pygtrie
 
 DOMAIN_TYPE_MAPPING = dict()
@@ -48,8 +55,8 @@ BANNED_WORDS = stopwords.words('english') + \
                 'resume', 'resumes', 'find me', 'the', 'search for me', 'search', 'searches', 'yes', 'yeah', 'popular',
                 'release', 'released', 'dance', 'dancing']
 
-def is_special_case(i, tokens, key_tokenized):
-    if ' '.join(key_tokenized) in BANNED_WORDS:
+def is_special_case(key):
+    if key in BANNED_WORDS:
         return True
     return False
 
@@ -74,24 +81,10 @@ class Database(object):
                 new_items_processed[token] = 'unk'
         
         self.data = Trie(new_items_processed)
-    
-    def lookup(self, tokens, subset=None, retrieve_method='database'):
-        tokens_type_ids = []
-        i = 0
         
-        if retrieve_method != 'database' and subset is not None:
-            if retrieve_method == 'thingtalk':
-                # types are retrieved from the program
-                lookup_dict = Trie(subset)
-            elif retrieve_method == 'answer':
-                # prune db (types are retrieved from the database)
-                lookup_dict = dict()
-                for token, type in self.data.items():
-                    if token in subset:
-                        lookup_dict[token] = type
-                lookup_dict = Trie(lookup_dict)
-        else:
-            lookup_dict = self.data
+    def lookup_smaller(self, tokens, lookup_dict):
+        i = 0
+        tokens_type_ids = []
         
         while i < len(tokens):
             token = tokens[i]
@@ -107,20 +100,123 @@ class Database(object):
                         break
                     j += 1
                     cur += 1
-                
+            
                 if j == len(key_tokenized):
-                    if is_special_case(i, tokens, key_tokenized):
+                    if is_special_case(' '.join(key_tokenized)):
                         continue
-                    
+                
                     # match found
                     found = True
                     tokens_type_ids.extend([self.type2id[type] for _ in range(i, cur)])
-                    
+                
                     # move i to current unprocessed position
                     i = cur
                     break
-            
+        
             if not found:
                 tokens_type_ids.append(self.type2id['unk'])
                 i += 1
+                
+        return tokens_type_ids
+
+    def lookup_longer(self, tokens, lookup_dict):
+        i = 0
+        tokens_type_ids = []
+        length = len(tokens)
+        found = False
+        while i < length:
+            end = length
+            while end > i:
+                tokens_str = ' '.join(tokens[i:end])
+                if tokens_str in lookup_dict:
+                    # match found
+                    found = True
+                    tokens_type_ids.extend([self.type2id[lookup_dict[tokens_str]] for _ in range(i, end)])
+                    # move i to current unprocessed position
+                    i = end
+                    break
+                else:
+                    end -= 1
+            if not found:
+                tokens_type_ids.append(self.type2id['unk'])
+                i += 1
+            found = False
+
+        return tokens_type_ids
+
+    def lookup(self, tokens, subset=None, retrieve_method='database', lookup_method='longer_first'):
+        tokens_type_ids = []
+        
+        if retrieve_method != 'database' and subset is not None:
+            if retrieve_method == 'thingtalk':
+                # types are retrieved from the program
+                lookup_dict = Trie(subset)
+            elif retrieve_method == 'answer':
+                # prune db (types are retrieved from the database)
+                lookup_dict = dict()
+                for token, type in self.data.items():
+                    if token in subset:
+                        lookup_dict[token] = type
+                lookup_dict = Trie(lookup_dict)
+        else:
+            lookup_dict = self.data
+            
+        if lookup_method == 'smaller_first':
+            tokens_type_ids = self.lookup_smaller(tokens, lookup_dict)
+        elif lookup_method == 'longer_first':
+            tokens_type_ids = self.lookup_longer(tokens, lookup_dict)
+ 
+        return tokens_type_ids
+    
+
+class ElasticDatabase(object):
+    def __init__(self, items):
+        self.es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
+        id = 0
+        for key, value in items.items():
+            self.es.index(index='db', doc_type='music', id=id, body={
+                "name": key,
+                "value": value
+            })
+            id += 1
+        
+        self.unk_type = 'unk'
+        self.type2id = {self.unk_type: 0}
+        self.type2id.update({type: i + 1 for i, type in enumerate(TYPES)})
+
+
+    def lookup(self, tokens, subset=None, retrieve_method='database', lookup_method='longer_first'):
+        i = 0
+        tokens_type_ids = []
+        length = len(tokens)
+        found = False
+        while i < length:
+            end = length
+            while end > i:
+                tokens_str = ' '.join(tokens[i:end])
+                result = self.es.search(index="db", body={"query": {"prefix": {"name": tokens_str}}})
+                matches = result['hits']['hits']
+                
+                if matches:
+                    matches = sorted(matches, key=lambda item: item['_score'], reverse=True)
+                    # choose the highest score satisfying constraints
+                    for k in range(len(matches)):
+                        match = matches[k]
+                        if not is_special_case(match):
+                            # match found
+                            found = True
+                            break
+                    if not found:
+                        continue
+                    tokens_type_ids.extend([self.type2id[match['_source']['value']] for _ in range(i, end)])
+                    # move i to current unprocessed position
+                    i = end
+                    break
+                else:
+                    end -= 1
+            if not found:
+                tokens_type_ids.append(self.type2id['unk'])
+                i += 1
+            found = False
+
         return tokens_type_ids

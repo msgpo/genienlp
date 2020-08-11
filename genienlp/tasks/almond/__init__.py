@@ -34,12 +34,13 @@ import re
 import json
 from tqdm import tqdm
 from collections import defaultdict
+import unicodedata
 
 from ..base_task import BaseTask
 from ..registry import register_task
 from ..generic_dataset import CQA, context_answer_len, token_batch_fn, default_batch_fn
 from ...data_utils.example import Example
-from ...data_utils.database import Database, DOMAIN_TYPE_MAPPING
+from ...data_utils.database import Database, ElasticDatabase, DOMAIN_TYPE_MAPPING
 
 from ..base_dataset import Split
 
@@ -155,7 +156,12 @@ class BaseAlmondTask(BaseTask):
             db_data = json.load(fin)
             # lowercase all keys
             db_data_processed = {key.lower(): value for key, value in db_data.items()}
-            self.db = Database(db_data_processed)
+            
+            if self.args.database_type == 'json':
+                self.db = Database(db_data_processed)
+            elif self.args.database_type == 'elastic':
+                self.db = ElasticDatabase(db_data_processed)
+        
     
         self.TTtype2DBtype = dict()
         for domain in self.args.almond_domains:
@@ -234,10 +240,11 @@ class BaseAlmondTask(BaseTask):
         # this will speed up the process significantly
         
         if self.args.retrieve_method == 'database' or split == 'test':
-            tokens_type_ids = self.db.lookup(tokens)
+            tokens_type_ids = self.db.lookup(tokens, lookup_method=self.args.lookup_method)
         else:
             entity2type = self.collect_answer_entity_types(answer)
-            tokens_type_ids = self.db.lookup(tokens, subset=entity2type, retrieve_method=self.args.retrieve_method)
+            tokens_type_ids = self.db.lookup(tokens, subset=entity2type,
+                                             retrieve_method=self.args.retrieve_method, lookup_method=self.args.lookup_method)
     
         return tokens_type_ids
     
